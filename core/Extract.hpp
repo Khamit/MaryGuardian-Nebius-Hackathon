@@ -14,6 +14,7 @@ struct Fields {
     std::string expires;              // ISO
     std::string expires_basis;        // expires|term|due|net
     long long   amount_minor = -1;
+    bool        amount_weak = false;   // сумма найдена только по голой метке «total»: ненадёжна
 };
 
 std::string parseDate(const std::string& s);               // первая дата в строке → ISO или ""
@@ -34,7 +35,11 @@ inline const std::vector<DocType>& docTypes() {
         {"statement", "Bank statements"}, {"payslip", "Payroll"}, {"tax", "Tax"}, {"insurance", "Insurance"},
         {"utility", "Utilities"}, {"legal", "Legal & court"}, {"identity", "Identity documents"},
         {"medical", "Medical"}, {"certificate", "Certificates"}, {"report", "Reports"},
-        {"letter", "Letters"}, {"other", "Other"}};
+        {"letter", "Letters"}, 
+        {"product_catalog", "Product catalogs & feeds"}, 
+        {"product_dataset", "Product datasets & exports"}, 
+        {"other", "Other"}
+    };
     return v;
 }
 

@@ -1,0 +1,133 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: win-x64
+            ext: .exe
+            cmake_args: "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
+          - os: macos-14           # arm64 runner
+            name: macos-arm64
+            ext: .zip
+            cmake_args: ""
+          - os: macos-13           # x64 runner
+            name: macos-x64
+            ext: .zip
+            cmake_args: ""
+          - os: ubuntu-22.04
+            name: linux-x64
+            ext: .AppImage
+            cmake_args: ""
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # ============ WINDOWS: vcpkg для статического MuPDF ============
+      - name: Setup vcpkg (Windows)
+        if: runner.os == 'Windows'
+        uses: lukka/run-vcpkg@v11
+        with:
+          # Зафиксируйте стабильный коммит vcpkg (например, от начала 2025 года)
+          vcpkgGitCommitId: '8eb50400e63e356b2d5e61d7d572003276f01803' 
+          runVcpkgInstall: true
+        env:
+          VCPKG_INSTALLED_DIR: ${{ github.workspace }}/vcpkg/installed
+
+      - name: Install MuPDF (Windows)
+        if: runner.os == 'Windows'
+        run: vcpkg install mupdf:x64-windows-static
+
+      # ============ MACOS: Homebrew ============
+      - name: Install deps (macOS)
+        if: runner.os == 'macOS'
+        run: brew install mupdf pkg-config curl sqlite nlohmann-json
+
+      # ============ LINUX: apt + AppImage tools ============
+      - name: Install deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libmupdf-dev libharfbuzz-dev libfreetype-dev \
+            libopenjp2-7-dev libjbig2dec0-dev libjpeg-dev zlib1g-dev \
+            libsqlite3-dev libcurl4-openssl-dev nlohmann-json3-dev \
+            appstream util-linux desktop-file-utils
+          # AppImage tool
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+
+      # ============ Общая сборка ============
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_args }} -DMG_LOCAL_LLM=OFF
+
+      - name: Build
+        run: cmake --build build --config Release -j
+
+      # ============ Упаковка ============
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir dist
+          copy build\Release\MaryGuardian.exe dist\MaryGuardian.exe
+          # SHA-256 чек-сумма
+          certutil -hashfile dist\MaryGuardian.exe SHA256 > dist\MaryGuardian.exe.sha256
+
+      - name: Package (macOS DMG)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p dist/dmg_temp/MaryGuardian.app/Contents/MacOS
+          cp build/MaryGuardian dist/dmg_temp/MaryGuardian.app/Contents/MacOS/
+          cp packaging/Info.plist dist/dmg_temp/MaryGuardian.app/Contents/
+          
+          # Создаем symlink на Applications, чтобы пользователь мог перетащить приложение
+          ln -s /Applications dist/dmg_temp/Applications
+          
+          # Создаем .dmg с помощью встроенной утилиты hdiutil
+          hdiutil create -volname "MaryGuardian" -srcfolder dist/dmg_temp -ov -format UDZO dist/MaryGuardian-${{ matrix.name }}.dmg
+          rm -rf dist/dmg_temp
+
+      - name: Package (Linux AppImage)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
+          cp build/MaryGuardian AppDir/usr/bin/
+          cp packaging/maryguardian.desktop AppDir/usr/share/applications/
+          cp packaging/icon.png AppDir/usr/share/icons/hicolor/256x256/apps/maryguardian.png
+          ln -s usr/bin/MaryGuardian AppDir/AppRun
+          cp packaging/icon.png AppDir/.DirIcon
+          ./appimagetool-x86_64.AppImage AppDir dist/MaryGuardian-${{ matrix.name }}.AppImage
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.name }}
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**
+          draft: true
+          generate_release_notes: true

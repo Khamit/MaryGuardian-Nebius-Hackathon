@@ -1,20 +1,21 @@
 #include <nlohmann/json.hpp>
+#include "../core/Platform.hpp"
+#include "../core/Safety.hpp"
 #include "HttpServer.hpp"
+#include "WebAssets.hpp"
+#include "../core/Consistency.hpp"
+#include "../core/XrayDoc.hpp"
 #include <iostream>
 #include <fstream>
 #include <sstream>
 #include <cstring>
 #include <cerrno>
 #include <chrono>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
 #include <filesystem>
 #include <unordered_map>
 #include <algorithm>
-#include <sys/time.h>
 #include <cctype>
-#include <poll.h>
+#include <set>
 
 namespace {
 // Безопасные геттеры: неверный тип поля не должен ронять процесс.
@@ -23,66 +24,90 @@ std::string getStr(const nlohmann::json& j, const char* key, const std::string& 
     return def;
 }
 
-void sendAll(int fd, const std::string& s) {
-    size_t off = 0;
-    while (off < s.size()) {
-        ssize_t n = send(fd, s.data() + off, s.size() - off, 0);
-        if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) break;
-        off += (size_t)n;
+// Вшитый UI вместо чтения с диска:
+bool loadWeb(const std::string& webDir, const std::string& rel, std::string& body, std::string& mime) {
+    namespace fs = std::filesystem;
+    // Режим разработки: файл с диска
+    if (!webDir.empty() && rel.find("..") == std::string::npos) {
+        fs::path root(webDir), file = root / rel.substr(1);
+        if (mary::safety::isInsideRoot(file, root) && fs::is_regular_file(file)) {
+            std::ifstream f(file, std::ios::binary);
+            std::stringstream ss; ss << f.rdbuf();
+            body = ss.str();
+            const std::string e = file.extension().string();
+            mime = e == ".css" ? "text/css" : e == ".js" ? "text/javascript"
+                 : e == ".svg" ? "image/svg+xml" : e == ".woff2" ? "font/woff2"
+                 : e == ".html" ? "text/html; charset=utf-8" : "application/octet-stream";
+            return true;
+        }
     }
+    // Продакшен: вшитые ассеты
+    if (const mary::WebAsset* a = mary::findWebAsset(rel.c_str())) {
+        body.assign((const char*)a->data, a->size);
+        mime = a->mime;
+        return true;
+    }
+    return false;
 }
+
 } // namespace
 
-    HttpServer::HttpServer(int port,
+HttpServer::HttpServer(const mary::Settings& cfg,
+                       mary::Services& svc,
                        mary::BookkeeperTask& task,
                        Guardian& guardian,
-                       mary::ModelRuntime& model,
                        mary::Indexer& indexer,
                        mary::Library& library,
                        const std::string& workspace)
-    : port_(port), task_(task), guardian_(guardian),
-      model_(model), indexer_(indexer), library_(library), workspace_(workspace) {
-    std::ifstream ur("/dev/urandom", std::ios::binary);
-    unsigned char b[16] = {0};
-    ur.read((char*)b, sizeof b);
-    static const char* hex = "0123456789abcdef";
-    for (unsigned char c : b) { token_ += hex[c >> 4]; token_ += hex[c & 15]; }
+        : port_(cfg.port),
+      cfg_(cfg),
+      svc_(svc),
+      task_(task),
+      guardian_(guardian),
+      extras_(svc),
+      indexer_(indexer),
+      library_(library),
+      workspace_(workspace) {
+    token_ = mary::plat::randomHex(16);
 }
 
 bool HttpServer::start() {
-    server_fd_ = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_fd_ < 0) { std::cerr << "[HTTP] socket failed\n"; return false; }
-
-    int opt = 1;
-    setsockopt(server_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    if (!mary::plat::netInit()) { std::cerr << "[HTTP] network init failed\n"; return false; }
+    server_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd_ == mary::plat::kInvalidSock) { std::cerr << "[HTTP] socket failed\n"; return false; }
+    mary::plat::setExclusiveBind(server_fd_);   // вместо SO_REUSEADDR
 
     sockaddr_in addr{};
     addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (inet_pton(AF_INET, cfg_.bindAddr.c_str(), &addr.sin_addr) != 1) addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     addr.sin_port        = htons(port_);
 
-    if (bind(server_fd_, (sockaddr*)&addr, sizeof(addr)) < 0) {
+    if (::bind(server_fd_, (sockaddr*)&addr, sizeof(addr)) < 0) {
         std::cerr << "[HTTP] bind failed on port " << port_ << "\n";
-        close(server_fd_); server_fd_ = -1;
+        mary::plat::closeSock(server_fd_); 
+        server_fd_ = mary::plat::kInvalidSock;
         return false;
     }
-    if (listen(server_fd_, 16) < 0) {
+    if (::listen(server_fd_, 16) < 0) {
         std::cerr << "[HTTP] listen failed\n";
-        close(server_fd_); server_fd_ = -1;
+        mary::plat::closeSock(server_fd_); 
+        server_fd_ = mary::plat::kInvalidSock;
         return false;
     }
 
     running_ = true;
     server_thread_ = std::thread(&HttpServer::run, this);
-    std::cout << "[HTTP] Listening on http://localhost:" << port_ << "\n";
+    std::cout << "[HTTP] Listening on http://" << cfg_.bindAddr << ":" << port_ << "\n";
     return true;
 }
 
 void HttpServer::stop() {
     if (!running_.exchange(false)) return;
     if (server_thread_.joinable()) server_thread_.join();
-    if (server_fd_ >= 0) { close(server_fd_); server_fd_ = -1; }
+    if (server_fd_ != mary::plat::kInvalidSock) {
+        mary::plat::closeSock(server_fd_);
+        server_fd_ = mary::plat::kInvalidSock;
+    }
     // Ждём активные запросы (до 3 с). Долгая генерация дождётся model.unload() через gen_mu_.
     for (int i = 0; i < 60 && active_.load() > 0; ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -90,12 +115,11 @@ void HttpServer::stop() {
 
 void HttpServer::run() {
     while (running_.load() && (!running_flag_ || running_flag_->load())) {
-        pollfd pfd{server_fd_, POLLIN, 0};
-        if (poll(&pfd, 1, 500) <= 0) continue;
+        if (mary::plat::waitReadable(server_fd_, 500) <= 0) continue;
         sockaddr_in client_addr{};
-        socklen_t   len = sizeof(client_addr);
-        int fd = accept(server_fd_, (sockaddr*)&client_addr, &len);
-        if (fd < 0) continue;
+        mary::plat::sock_len_t len = sizeof(client_addr);
+        mary::plat::sock_t fd = ::accept(server_fd_, (sockaddr*)&client_addr, &len);
+        if (fd == mary::plat::kInvalidSock) continue;
         ++active_;                                   // до старта потока
         std::thread(&HttpServer::handleClient, this, fd).detach();
     }
@@ -118,14 +142,13 @@ static std::string headerValue(const std::string& headers, std::string name) {
     return "";
 }
 
-static bool readRequest(int fd, std::string& out) {
-    timeval tv{5, 0};
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+static bool readRequest(mary::plat::sock_t fd, std::string& out) {
+    mary::plat::setRecvTimeoutMs(fd, 5000);
     constexpr size_t MAX_REQ = 1 << 20;
     char buf[4096];
     size_t header_end = std::string::npos, content_len = 0;
     while (out.size() < MAX_REQ) {
-        ssize_t n = read(fd, buf, sizeof buf);
+        int n = mary::plat::recvSome(fd, buf, (int)sizeof buf);
         if (n <= 0) return false;
         out.append(buf, (size_t)n);
         if (header_end == std::string::npos && (header_end = out.find("\r\n\r\n")) != std::string::npos) {
@@ -139,11 +162,11 @@ static bool readRequest(int fd, std::string& out) {
     return false;
 }
 
-void HttpServer::handleClient(int fd) {
+void HttpServer::handleClient(mary::plat::sock_t fd) {
     struct Guard { std::atomic<int>& n; ~Guard() { --n; } } guard{active_};
 
     std::string request;
-    if (!readRequest(fd, request)) { close(fd); return; }
+    if (!readRequest(fd, request)) { mary::plat::closeSock(fd); return; }
 
     std::string response;
     try {
@@ -158,13 +181,18 @@ void HttpServer::handleClient(int fd) {
 
         const std::string p = std::to_string(port_);
         const std::string host = headerValue(headers, "host");
-        const bool host_ok = (host == "localhost:" + p || host == "127.0.0.1:" + p);
         const std::string origin = headerValue(headers, "origin");
-        const bool origin_ok = origin.empty() || origin == "http://localhost:" + p || origin == "http://127.0.0.1:" + p;
+
+        std::set<std::string> hosts = {"localhost:" + p, "127.0.0.1:" + p};
+        for (const auto& h : cfg_.allowedHosts) hosts.insert(h);
+        const bool host_success = hosts.count(host) > 0;
+        bool origin_success = origin.empty();
+        for (const auto& h : hosts) if (origin == "http://" + h || origin == "https://" + h) origin_success = true;
+
         const bool is_api = path.rfind("/api/", 0) == 0;
         const bool token_ok = !is_api || headerValue(headers, "x-auth-token") == token_;
 
-        if (!host_ok || !origin_ok || !token_ok) {
+        if (!host_success || !origin_success || !token_ok) {
             guardian_.record("http_rejected:" + path, false, "Invalid Host/Origin/token");
             response = httpResponse(403, "text/plain", "Forbidden");
         } else {
@@ -177,44 +205,40 @@ void HttpServer::handleClient(int fd) {
     } catch (...) {
         response = httpResponse(500, "text/plain", "Internal Server Error");
     }
-    sendAll(fd, response);
-    close(fd);
+    mary::plat::sendAll(fd, response); 
+    mary::plat::closeSock(fd);         
 }
 
 std::string HttpServer::route(const std::string& method,
                               const std::string& path,
                               const std::string& body) {
     if (method == "GET" && (path == "/" || path == "/index.html")) {
-        std::string html = loadHtml();
-        for (size_t p = html.find("__TOKEN__"); p != std::string::npos;
-             p = html.find("__TOKEN__", p + token_.size()))
-            html.replace(p, 9, token_);
-        return httpResponse(200, "text/html; charset=utf-8", html);
+        std::string html, mime;
+        if (loadWeb(cfg_.webDir, "/index.html", html, mime)) {
+            // подставить __TOKEN__ как раньше
+            for (size_t p = html.find("__TOKEN__"); p != std::string::npos;
+                p = html.find("__TOKEN__", p + token_.size()))
+                html.replace(p, 9, token_);
+            return httpResponse(200, mime, html);
+        }
+        return httpResponse(404, "text/plain", "Not Found");
     }
 
     if (method == "GET" && path.rfind("/static/", 0) == 0) {
-        namespace fs = std::filesystem;
-        fs::path root = fs::path(workspace_) / "web";
-        fs::path file = root / path.substr(8);
-        if (path.find("..") != std::string::npos ||
-            !mary::safety::isInsideRoot(file, root) || !fs::is_regular_file(file))
-            return httpResponse(404, "text/plain", "Not Found");
-        std::ifstream f(file, std::ios::binary);
-        std::stringstream ss; ss << f.rdbuf();
-        std::string ext = file.extension().string();
-        std::string ct = ext == ".css"   ? "text/css"
-                       : ext == ".js"    ? "text/javascript"
-                       : ext == ".svg"   ? "image/svg+xml"
-                       : ext == ".woff2" ? "font/woff2"
-                       : ext == ".woff"  ? "font/woff"
-                                         : "application/octet-stream";
-        return httpResponse(200, ct, ss.str());
+        std::string body, mime;
+        if (loadWeb(cfg_.webDir, "/" + path.substr(8), body, mime))
+            return httpResponse(200, mime, body);
+        return httpResponse(404, "text/plain", "Not Found");
     }
 
     auto parseBody = [&]() -> nlohmann::json {
         try { return body.empty() ? nlohmann::json::object() : nlohmann::json::parse(body); }
         catch (...) { return nlohmann::json::object(); }
     };
+
+    if (path == "/api/backend"  && method == "GET") return jsonOk(extras_.backend());
+    if (path == "/api/outbound" && method == "GET") return jsonOk(extras_.outbound());
+    if (cfg_.demoMode && method == "POST" && path == "/api/export") return jsonError("disabled in demo mode");
 
     if (path == "/api/status" && method == "GET") return apiStatus();   // свой try_lock
     if (path == "/api/audit"  && method == "GET") return apiAudit();    // замок внутри Guardian
@@ -244,6 +268,19 @@ std::string HttpServer::apiLib(const std::string& op, const nlohmann::json& b) {
         return (b.is_object() && b.contains("id") && b["id"].is_number_integer()) ? b["id"].get<long long>() : 0;
     };
     
+    nlohmann::json extra;
+    if (extras_.handle(op, b, extra)) return wrap(extra);
+        if (op == "risk_overview") return jsonOk(svc_.consistency ? svc_.consistency->overview() : nlohmann::json::object());
+    if (op == "doc_flags")     return jsonOk({{"flags", svc_.consistency ? svc_.consistency->flags(id()) : nlohmann::json::array()}});
+    if (op == "payee_confirm") {
+        if (!svc_.consistency) return jsonError("consistency checks are not enabled");
+        auto r = svc_.consistency->confirmPayee(id());
+        if (r.contains("error")) return wrap(r);
+        guardian_.record("organize:payee_confirm", true, "doc id=" + std::to_string(id()));   // подтверждение пользователя попадает в аудит
+        return jsonOk(r);
+    }
+    if (op == "xray") return wrap(xrayJson(b));
+
     if (op == "scan") {
         bool started = indexer_.start();
         bool already_running = !started && indexer_.isRunning();
@@ -272,14 +309,14 @@ std::string HttpServer::apiLib(const std::string& op, const nlohmann::json& b) {
 // Не блокируемся на mutex_: пока идёт долгая генерация, отвечаем "generating".
 std::string HttpServer::apiStatus() {
     std::unique_lock<std::mutex> lk(mutex_, std::try_to_lock);
-    if (!lk.owns_lock()) return jsonOk({{"step","generating"}, {"model_loaded", model_.isLoaded()},
+    if (!lk.owns_lock()) return jsonOk({{"step","generating"}, {"model_loaded", svc_.llm->available()},
                                         {"pii_warning", false}, {"pending_approval", false}, {"error", ""}});
 
     const auto& s = task_.state();
     static const char* step_names[] = {"idle","extracted","draft_ready","approved","error"};
     nlohmann::json j;
     j["step"]             = step_names[static_cast<int>(s.step)];
-    j["model_loaded"]     = model_.isLoaded();
+    j["model_loaded"]     = svc_.llm->available();
     j["pii_warning"]      = s.pii_warning;
     j["pending_approval"] = guardian_.isPending();
     j["error"]            = s.error;
@@ -341,6 +378,18 @@ std::string HttpServer::apiAudit() {
 // =========================================================
 // Helpers
 // =========================================================
+nlohmann::json HttpServer::xrayJson(const nlohmann::json& b) {
+    const long long docId = (b.is_object() && b.contains("id") && b["id"].is_number_integer()) ? b["id"].get<long long>() : 0;
+    const int page = (b.is_object() && b.contains("page") && b["page"].is_number_integer()) ? b["page"].get<int>() : 0;
+    const auto d = library_.doc(docId);
+    if (d.contains("error")) return d;
+    const std::string name = std::filesystem::path(getStr(d["doc"], "filename")).filename().string();
+    auto v = guardian_.checkFile("read", workspace_ + "/inbox/" + name, false, /*log_allowed=*/false);
+    if (!v.allowed) return nlohmann::json{{"error", v.reason}};
+    return mary::xray::viewForDocument(d["doc"], workspace_ + "/inbox", page, svc_.consistency,
+                                       svc_.protectedTerms ? svc_.protectedTerms() : std::vector<std::string>{},
+                                       cfg_.piiLevel == "standard" ? mary::MaskLevel::Standard : mary::MaskLevel::Strict);
+}
 
 std::string HttpServer::loadHtml() const {
     std::ifstream f2(workspace_ + "/web/index.html");
@@ -384,7 +433,7 @@ std::string HttpServer::httpResponse(int code,
        << "Content-Type: " << content_type << "\r\n"
        << "Content-Length: " << body.size() << "\r\n"
        << "X-Content-Type-Options: nosniff\r\n"
-       << "Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'\r\n"
+       << "Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'\r\n"
        << "Cache-Control: no-store\r\n"
        << "Connection: close\r\n\r\n"
        << body;

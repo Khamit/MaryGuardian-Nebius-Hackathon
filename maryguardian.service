@@ -1,0 +1,33 @@
+# Демо без Докер: обычный бинарник под systemd на ВМ (Nebius или любой VPS), HTTPS даёт Caddy (см. Caddyfile).
+# Установка (Ubuntu 22.04+):
+#   sudo useradd -r -m -d /var/lib/maryguardian mary
+#   sudo install -m755 MaryGuardian-linux-x64 /opt/maryguardian/MaryGuardian
+#   sudo install -m600 /dev/null /etc/maryguardian.env   # впишите: NEBIUS_API_KEY=...   (отдельный ключ с лимитом расхода!)
+#   sudo cp maryguardian.service /etc/systemd/system/ && sudo systemctl enable --now maryguardian
+[Unit]
+Description=MaryGuardian public demo (synthetic data only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=mary
+EnvironmentFile=/etc/maryguardian.env
+Environment=MG_WORKSPACE=/var/lib/maryguardian
+Environment=MG_BIND=127.0.0.1
+Environment=MG_PORT=8080
+Environment=MG_DEMO_MODE=1
+Environment=MG_NO_BROWSER=1
+# Host-заголовок, который пришлёт Caddy (БЕЗ схемы и без порта). Origin https://<этот-хост> разрешается автоматически.
+Environment=MG_ALLOWED_HOSTS=demo.example.com
+Environment=LLM_MAX_REQUESTS_PER_HOUR=300
+ExecStart=/opt/maryguardian/MaryGuardian --seed-demo
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/maryguardian
+
+[Install]
+WantedBy=multi-user.target

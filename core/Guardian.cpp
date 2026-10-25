@@ -1,4 +1,5 @@
 #include "Guardian.hpp"
+#include "Platform.hpp"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -122,8 +123,7 @@ void Guardian::persist(const LogEntry& e) {
 
 std::string Guardian::now() const {
     auto tt = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    std::tm tm{};
-    localtime_r(&tt, &tm);
+    std::tm tm = mary::plat::localTm(tt);
     std::ostringstream ss;
     ss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
     return ss.str();

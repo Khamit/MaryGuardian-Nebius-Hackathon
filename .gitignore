@@ -3,15 +3,27 @@
 *.d
 MaryGuardian
 third_party/llama.cpp/
+build/
+cmake-build-*/
+.idea/
+.vscode/
+*.xcodeproj/
+*.xcworkspace/
+maryguardian-kit/
+
+# Env & secrets
+.env
+*.env.local
 
 # User data - NEVER commit
 mg_workspace/
-docs/
+/maryguardian-kit/
 local/
 node_modules/
 
 # Build artifacts
 build/
+/build
 *.o
 *.d
 *.a
@@ -31,6 +43,11 @@ audit.jsonl
 
 # Old code
 old_version/
+start.txt
 
-# macOS
+# OS
 .DS_Store
+Thumbs.db
+
+# Generated
+gen/

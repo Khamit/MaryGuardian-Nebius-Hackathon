@@ -161,6 +161,8 @@ Fields fromName(const std::string& filename) {
         {"medical",     std::regex(R"((^|[^a-z])(medical|prescription|diagnosis)([^a-z]|$))")},
         {"certificate", std::regex(R"((^|[^a-z])(certificate|diploma)([^a-z]|$))")},
         {"report",      std::regex(R"((^|[^a-z])(report|minutes)([^a-z]|$))")},
+        {"product_catalog", std::regex(R"((^|[^a-z])(catalog|feed|price[ _-]?list|каталог|прайс|тауарлар)([^a-z]|$))", std::regex::icase)},
+        {"product_dataset", std::regex(R"((^|[^a-z])(dataset|export|выгрузка|набор[ _-]?данных|деректер)([^a-z]|$))", std::regex::icase)},
     };
     for (const auto& r : rules) if (std::regex_search(n, r.re)) { f.type = r.type; break; }
     return f;
@@ -190,6 +192,8 @@ Fields fromText(const std::string& text) {
     else if (has("certificate of") || has("this is to certify") || has("diploma")) f.type = "certificate";
     else if (has("annual report") || has("meeting minutes") || has("minutes of the")) f.type = "report";
     else if (has("dear ") && (low(t).find("sincerely") != std::string::npos || low(t).find("regards") != std::string::npos)) f.type = "letter";
+    else if (has("product catalog") || has("product feed") || has("price list") || has("каталог товаров") || has("прайс-лист") || has("тауарлар каталогы")) f.type = "product_catalog";
+    else if (has("product dataset") || has("data export") || has("inventory export") || has("выгрузка товаров") || has("набор данных")) f.type = "product_dataset";
 
     // --- дата документа (метка "date", но не "due date" / "valid until") ---
     {
@@ -237,12 +241,15 @@ Fields fromText(const std::string& text) {
                                std::regex::icase);
             return v;
         }();
-        for (const auto& re : res) {
+        for (size_t li = 0; li < res.size(); ++li) {
+            const auto& re = res[li];
             std::smatch m;
             if (!std::regex_search(t, m, re)) continue;
             long long minor = toMinor(m[2].str());
             if (minor < 0) continue;
             f.amount_minor = minor;
+            f.amount_weak = (li + 1 == res.size());   // последняя метка в списке — голое «total»
+
             std::string cur = m[1].matched ? m[1].str() : (m[3].matched ? m[3].str() : "");
             if (cur == "$") cur = "USD"; else if (cur == "\xE2\x82\xAC") cur = "EUR"; else if (cur == "\xC2\xA3") cur = "GBP";
             f.currency = cur.empty() ? "" : [&] { std::string u = cur; for (char& c : u) c = (char)std::toupper((unsigned char)c); return u; }();

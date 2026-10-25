@@ -8,12 +8,14 @@ int main() {
     // default-deny и точные совпадения
     assert(isAllowedAction("read") && isAllowedAction(" Draft "));
     assert(!isAllowedAction("shell") && !isAllowedAction("rm") && !isAllowedAction("read_all"));
-    assert(isAllowedAction("export"));                 // "format"/"inform" больше не задевают легитимные действия
+    assert(isAllowedAction("export")); // "format"/"inform" больше не задевают легитимные действия
+    assert(isAllowedAction("llm_remote"));
 
     // пути
     assert(isInsideRoot("ws/inbox/a.pdf", "ws/inbox"));
     assert(!isInsideRoot("ws/inbox/../../etc/passwd", "ws/inbox"));
     assert(!isInsideRoot("/etc/passwd", "ws/inbox"));
+    
 
     // PII
     assert(pii::contains("карта 4111 1111 1111 1111"));           // валидный Luhn

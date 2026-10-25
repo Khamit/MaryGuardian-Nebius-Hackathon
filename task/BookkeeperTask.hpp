@@ -4,7 +4,9 @@
 #include <nlohmann/json.hpp>
 #include "../core/Guardian.hpp"
 #include "../core/Verifier.hpp"
-#include "../core/ModelRuntime.hpp"
+// #include "../core/ModelRuntime.hpp"
+// через 
+#include "../core/LlmClient.hpp"
 
 namespace mary {
 
@@ -18,7 +20,7 @@ namespace mary {
 // Заменяет: DisputeTask (7 фаз), StateEngine, AgentGraph, ContextAssembler,
 //           KnowledgeBase, DocumentStore, UserProfile, ModelRouter.
 
-enum class Step { IDLE, EXTRACTED, DRAFT_READY, APPROVED, ERROR };
+enum class Step { IDLE, EXTRACTED, DRAFT_READY, APPROVED, ERR };
 
 struct TaskState {
     Step        step        = Step::IDLE;
@@ -31,7 +33,7 @@ struct TaskState {
 
 class BookkeeperTask {
 public:
-    BookkeeperTask(ModelRuntime& model, Guardian& guardian, Verifier& verifier);
+    BookkeeperTask(LlmClient& llm, Guardian& guardian, Verifier& verifier);
 
     // --- Шаг 1: Извлечь текст ---
     // Принимает пути к PDF и/или TXT. Проверяет prompt injection.
@@ -58,9 +60,10 @@ public:
 private:
     std::string readFile(const std::string& path) const;
     std::string extractPdfText(const std::string& path) const;
-    std::string buildPrompt(const std::string& instruction, const std::string& doc) const;
+    std::string buildUser(const std::string& task_in, const std::string& doc) const;
+    std::string buildSystem() const;
 
-    ModelRuntime& model_;
+    LlmClient& llm_;
     Guardian&     guardian_;
     Verifier&     verifier_;
     TaskState     state_;

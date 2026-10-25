@@ -22,7 +22,7 @@ inline std::string normalize(std::string s) {
 // Default-deny: разрешено только то, что перечислено. Новое действие = осознанное решение.
 inline const std::set<std::string>& allowedActions() {
     static const std::set<std::string> a = {
-        "read", "draft", "export", "show_output",
+        "read", "draft", "export", "show_output", "llm_remote",
         "index",      // сканирование inbox и классификация
         "organize"    // правки пользователя в дереве коллекций
     };

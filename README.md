@@ -1,185 +1,200 @@
 # MaryGuardian
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[Русская версия](Readme.ru.md)
 
-**Local-first document sorter and assistant for accountants, bookkeepers and small legal practices.**
-Point it at a folder of PDFs, spreadsheets and text files. It indexes them, recognises invoices, contracts,
-statements and more, tracks expiry and due dates, finds duplicates, and answers questions about your library —
-using a language model that runs **on your own machine**. Nothing is uploaded anywhere.
+**A private paperwork bodyguard, powered by NVIDIA Nemotron on Nebius Token Factory.**
 
-*Читать на русском: [README.ru.md](README.ru.md)*
+Drop invoices, contracts, letters and bills into a folder. MaryGuardian reads and files them, tracks every deadline and, more importantly, **checks the documents against each other**: does the bank account on this invoice match the contract? Did the vendor "just change" its details? Is there text on the page that a person cannot see but a model would obey? Every finding is shown **on the page itself**, with its evidence. When something needs action, it drafts the message for you, and **nothing is exported or sent without your approval**. Your personal data **never leaves your machine unmasked**.
 
-> **Status: early / minimal working core.** It works end to end on macOS (Apple Silicon). Linux support, tests and
-> packaging are open for contributions — see [Roadmap](#roadmap--help-wanted).
-> MaryGuardian is an assistant, not an accountant or a lawyer: AI output can be wrong. Verify before relying on it.
+> **Hackathon track:** Personal AI · **Demo:** `<DEMO_URL>` · **Video:** `<VIDEO_URL>`
+
+## Why this is not another document organizer
+
+Filing is the easy part, and it is also the part where a cloud model would normally have to see everything. The expensive mistakes happen *between* documents:
+
+* an invoice that looks like last quarter's but pays a different bank account;
+* a "we have updated our bank details" letter that arrives through the same channel as the invoice and therefore proves nothing;
+* a PDF with hidden instructions, set in white text, written for your AI rather than for you.
+
+MaryGuardian treats these as the product. Organizing is only the first layer.
 
 ## What it does
 
-- **Fast, incremental inbox scan.** Files are identified by SHA-256, so renames, moves and duplicates are detected.
-  Unchanged files are recognised from an in-memory index without being reopened; new files are hashed in parallel
-  and written to SQLite in batched transactions. Re-scanning a library of 30k files takes a fraction of a second.
-- **Classification in two steps.** Deterministic rules first (dates, document numbers, amounts, currency, company,
-  expiry), then a local LLM for type, issuer and a one-line summary. Model answers are cached, so reclassifying
-  does not repeat work. A company name from the model is accepted only if it appears verbatim in the text.
-- **18 document types → collections** (invoices, receipts, credit notes, quotes, purchase orders, contracts, bank
-  statements, payroll, tax, insurance, utilities, legal, identity, medical, certificates, reports, letters, other).
-  Add your own collections with keywords. Empty collections are hidden in the sidebar.
-- **Expiry tracking and cleanup.** Expired / expiring-in-30-days documents, possible duplicates, documents that need
-  review, files that disappeared from the inbox. Files are **never modified or deleted** by the app.
-- **Ask your library.** Questions are answered from document cards only (retrieval happens in code, the model cannot
-  see anything else) with `[id]` citations.
-- **Single-document drafting.** Extract → draft (e.g. a complaint letter) → human review → approve → export.
-- **Activity screen.** Shows how much work was avoided by caching: files not re-read, hashes, AI calls vs cache hits,
-  database commits.
+| Layer | What it does | Where it runs |
+|---|---|---|
+| **Document intelligence** | Reads PDF, DOCX, XLSX, PPTX, ODT/ODS, plain text, CSV and XML (UTF-8, UTF-16, Windows-1251). Rules recognise English, Russian and Kazakh phrasing. Sorts into 19 document types plus *other* (invoices, receipts, contracts, bank statements, payslips, tax, insurance, utility bills, product catalogs and datasets, …) and extracts issuer, number, dates, amounts, currency and deadlines | rules first, then Nemotron Nano / Super; **code validates every value** |
+| **Document security** | Prompt-injection screening, including white-on-white text; masking of personal data and secrets before any cloud call | local |
+| **Consistency & fraud detection** | Payee account against history and against your own confirmation, "details changed" notices, IBAN checksum, reused invoice numbers, outlier amounts, impossible dates | **local, no model involved** |
+| **Assistant, human in the loop** | Answers questions over the library with `[id]` citations (Ultra); drafts letters and verification requests (Super); remembers the accounts you confirmed and the corrections you make; lists expired, expiring, duplicate and missing documents | Nemotron through the Guardian gateway; memory in local SQLite |
 
-### Supported inputs
+**Screens:** *Library* (views: Needs attention, Needs review, Expiring ≤ 30 days, Expired, Unsorted; collections with your own keywords; company merge) · *Cleanup* · *Ask* · *Profile* · *Single document* (pick files → draft → approve → save to the output folder) · *Activity* (files not re-read, model calls, tokens, tokens saved by the cache) · *Privacy* (what the cloud was sent) · *Settings* · *Audit log* · *X-ray* (below).
 
-| Input | How |
+### Demo scenario: the changed bank account
+
+The demo set contains four documents from one vendor:
+
+1. `service_agreement_brightwave.pdf` and `INV-2026-0101_brightwave.pdf` show account **A** (ending `3000`).
+2. `INV-2026-0106_brightwave.pdf` shows account **B** (ending `2051`).
+3. `letter_brightwave_bank_update.pdf` says "our bank details have changed" and gives account B.
+
+An organizer would simply file all four. MaryGuardian flags the new invoice as **high risk**:
+
+> Bank account ending 2051 does not match the account(s) on file for Brightwave Energy GmbH: ending 3000 (first seen in service_agreement_brightwave.pdf; not independently confirmed). A notice in letter_brightwave_bank_update.pdf says the details changed, but it came through the same channel as the invoice, so it is not independent confirmation. No independent confirmation is recorded: verify by phone using a number from your own records.
+
+Design decisions behind this:
+
+* **Local and deterministic.** The cloud model never sees an account number (it sees `[IBAN_1]`). The database keeps only a salted SHA-256 fingerprint and the last four characters, never the number itself.
+* **An explanation, not a score.** Every flag names the document, the account, the baseline and the reason.
+* **Independent confirmation is explicit.** After you verify the account through a channel you trust, press *Confirmed by phone*. The account is recorded (and written to the audit log), the flag turns into an info note, and older invoices from the same vendor stay clean.
+* **The human stays in the loop.** *Draft verification request* writes an email to the vendor through the Guardian gateway. You edit and approve it; the app sends nothing anywhere.
+
+The checks, by flag code: `PAYEE_CHANGED`, `PAYEE_EXTRA`, `CHANGE_NOTICE`, `PAYEE_CONFIRMED`, `IBAN_INVALID`, `NUMBER_REUSED`, `AMOUNT_OUTLIER`, `DATES`, plus `INJECTION` from the screening step.
+
+### X-ray: see what the agent saw
+
+Open any PDF in **X-ray** to replay the analysis on the page itself:
+
+| Colour | Meaning |
 |---|---|
-| PDF with a text layer | MuPDF |
-| Text, CSV, XML, JSON (UTF-8 / UTF-16 / Windows-1251) | built-in reader |
-| DOCX, XLSX, PPTX, ODT, ODS | built-in reader (ZIP + XML via MuPDF's archive API) |
-| Scanned PDFs | optional OCR with a local vision-language model (`--ocr-model`, `--ocr-mmproj`); results are always flagged for review |
-| Standalone images (JPG/PNG), legacy `.doc`/`.xls` | **not supported yet** — good first issues |
+| green | a value the pipeline found (issuer, number, dates, amount, bank account) |
+| red | a bank account that differs from the one on file |
+| black ("Cloud view") | what Guardian replaces with placeholders before anything reaches the cloud, shown as `[IBAN_1]`, `[COMPANY_2]`… |
+| orange | a phrase that looks like an instruction to an AI |
+| purple | a line printed in white: invisible to a person, readable by a model |
 
-## Safety model
+`INV-2026-0999_evil_vendor.pdf` in the demo set hides its instructions in white text. The page looks like an ordinary invoice, and X-ray shows the two hidden lines. Guardian keeps the document away from every model. X-ray itself runs entirely on your machine; only the optional *Draft verification request* button calls a model, and it goes through Guardian like every other call.
 
-`Guardian` is the single checkpoint between the model and the user:
+## NVIDIA Nemotron on Nebius Token Factory
 
-- **Default-deny** action whitelist; reads confined to `inbox/`, writes to `output/`; symlinks and oversized files refused.
-- **PII detection** (cards with Luhn check, SSN, IBAN, e-mail, RU tax IDs, …) before anything is shown.
-- **Prompt-injection heuristics** on document text; document text is neutralised before it enters a prompt.
-- **Human-in-the-loop:** drafts must be approved before they can be exported.
-- **Audit log** of every decision in `logs/audit.jsonl`.
-- The web UI listens on **127.0.0.1 only**, requires a per-run token, checks `Host` and `Origin`, and sends a strict CSP.
+Every model call goes to the Token Factory OpenAI-compatible API. Work is tiered so cheap calls stay cheap and hard ones get the strongest model:
 
-These are heuristics, not guarantees. See [SECURITY](#reporting-security-issues).
+| Tier | Model (configurable in `.env`) | What it does here |
+|---|---|---|
+| **Nano** | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | bulk classification of every new document (type, issuer, one-line summary) |
+| **Super** | `nvidia/nemotron-3-super-120b-a12b` | field extraction when rules and Nano disagree or a value looks unreliable (dates, numbers, amounts, issuer); drafting letters and verification requests |
+| **Ultra** | `nvidia/Nemotron-3-Ultra-550b-a55b` | questions over the whole library, with `[id]` citations |
 
-## Quick start (macOS, Apple Silicon)
+**The model proposes, code decides.** A value from Super is accepted only if it verifiably appears in the document: dates must be real ISO dates, an amount must match a number in the text, and issuer and number must occur verbatim. Because placeholders are restored in memory before validation, this check works on masked prompts as well.
 
-Requirements: Xcode command-line tools, Homebrew `mupdf`, SQLite (system), a build of
-[llama.cpp](https://github.com/ggml-org/llama.cpp) with `mtmd` in `third_party/llama.cpp`, and
-`nlohmann/json.hpp` in `third_party/nlohmann/`.
+Where Token Factory helped: one OpenAI-compatible endpoint for three model sizes made tiering a config change instead of three integrations, and kept the app small (libcurl, no SDK). `scripts/check_models.sh --live` makes one real call per tier and prints the model, tokens and finish reason as proof of live execution.
+
+## Privacy by construction: the Guardian gateway
+
+A cloud model and a tax ID do not belong together, so the model never gets one.
+
+```mermaid
+flowchart LR
+  subgraph PC["Your computer"]
+    F["Inbox folder (read-only)"] --> W["Watcher + SHA-256 incremental index"]
+    W --> R["Rules + prompt-injection screening"]
+    R --> C["Consistency checks, local only:<br/>payee account, change notices, amounts, dates"]
+    R -->|"snippet up to 1,200 chars"| G["Guardian gateway<br/>allow-list, masking, leak check, audit"]
+    G -->|"HTTPS, masked text only"| T[("Nebius Token Factory<br/>Nemotron Nano / Super / Ultra")]
+    T --> G
+    G -->|"placeholders restored in memory"| D[("SQLite library")]
+    C --> D
+    D --> X["X-ray: page + evidence"]
+  end
+```
+
+1. **Default-deny actions.** Calling the cloud is an action (`llm_remote`) that must be on Guardian's allow-list.
+2. **Masking before sending**, on two levels (`PII_MASK_LEVEL`):
+   * `standard`: card numbers (Luhn-checked), IBAN, SSN/EIN, e-mail, phone numbers, Russian INN/SNILS/passport, Kazakh BIN/IIN, 9+ digit identifiers, dates of birth, **and secrets**: API keys, bearer tokens, JWTs, private keys, `password: …`.
+   * `strict` (default): everything above plus **company names** (by label such as `From:` / `Поставщик:` and by legal form such as LLC, GmbH, ТОО, ИП), **document and account numbers**, **personal names and addresses by label**, BIC/SWIFT, and long token-like strings. A value found once is masked everywhere in the text, even without its label.
+   * The application's own API key is registered as a protected value: it cannot appear in a prompt.
+   * Amounts and dates stay readable on purpose; the model needs them to extract fields.
+   * Placeholders map back to originals only in memory, for the duration of one request.
+3. **Fail-closed.** After masking, the text is scanned again; if anything sensitive is still visible, the request is **not sent**.
+4. **Prompt-injection screening** runs locally on the raw text. A suspicious document never reaches a model.
+5. **Audit trail.** Every outbound request is logged with what the cloud actually saw (the masked text), a SHA-256 of the payload, token counts and latency. See the **Privacy** tab. Original values are never written to this log. Your confirmations and corrections are written to the audit log too.
+6. **Your files are never modified or deleted.** The inbox is only read; approved drafts are written to a separate output folder, and the PDF editor refuses to overwrite its source.
+7. **Budget guard.** A per-hour request cap protects your credits.
+8. **Local server hardening.** The UI binds to loopback by default, every API call needs a per-run token, and the Host and Origin headers are checked.
+
+What the test suite proves (`ctest`): a mock "provider" records every request body, and the test fails if any secret (IBAN, e-mail, SSN, protected name) appears in it. It also checks that the model's answer comes back with the real values restored, that masking is reversible and leaves nothing for the leak check to find, and that the database never contains a raw bank account number.
+
+### Honest limits
+
+* Structured identifiers are detected automatically. **Names and postal addresses cannot be reliably detected by rules**: `strict` catches them when they follow a label (`Employee:`, `Address:`, `Dear …`); anything else goes under *Settings → Always hide these* (or `PII_PROTECTED_TERMS`).
+* Masked snippets of up to 1,200 characters (amounts, dates, descriptions, document types) do reach the model. That is the point of using it. Set `LLM_BACKEND=off` to keep everything on the machine; classification then falls back to rules, and all consistency checks still run.
+* A flag is a reason to verify, not a verdict. The baseline for a vendor is your confirmed account or, failing that, the first document seen ("trust on first use"). If the very first document already carries a forged account, comparison cannot catch it; only your confirmed registry can. A notice from the same sender is never treated as confirmation.
+* The app records your confirmation but cannot verify the phone call itself.
+* Injection screening is a heuristic (English and Russian phrases), not a guarantee. Hidden-text detection finds near-white text; tiny or off-page text is not detected.
+* In `strict` mode, company names that carry no legal form are masked only after they appear next to a label, so a question about such a name in *Ask* may not match its masked card.
+
+## Quick start
+
+**Fastest:** open the hosted demo at `<DEMO_URL>`. It holds synthetic data only, settings are read-only, and its state is shared between visitors.
+
+**Run it yourself** (macOS or Linux; needs a C++17 compiler, CMake, MuPDF, SQLite, libcurl and pkg-config; nlohmann-json is taken from `third_party/` if it is not installed):
 
 ```bash
-brew install mupdf
-git clone --recurse-submodules https://github.com/Khamit/MaryGuardian.git && cd MaryGuardian
+# macOS:           brew install mupdf sqlite curl pkg-config cmake
+# Debian / Ubuntu: sudo apt install build-essential cmake pkg-config libmupdf-dev libsqlite3-dev libcurl4-openssl-dev
 
-# llama.cpp (tested with commit: <FILL IN>) — the API changes often, pin the version you use
-cd third_party/llama.cpp && cmake -B build -DGGML_METAL=ON && cmake --build build --config Release -j && cd ../..
-
-make                 # builds ./MaryGuardian
-make install-web     # copies web/index.html into mg_workspace/web
+git clone <this repo> && cd <this repo>
+cp .env.example .env                       # put your NEBIUS_API_KEY in it
+scripts/check_models.sh --live             # verifies the key and the three model IDs
+cmake -S . -B build && cmake --build build -j
+./build/MaryGuardian --seed-demo           # writes 24 synthetic documents into mg_workspace/inbox; UI at http://127.0.0.1:8080
 ```
 
-The UI uses [Bootstrap Icons](https://icons.getbootstrap.com/) (MIT). Put them in
-`mg_workspace/web/vendor/bootstrap-icons/` (the page works without them, it just looks plainer).
+Run it from the repository root so that `.env` is found. `--seed-demo` also switches on demo mode (settings read-only, export disabled). To use your own documents, start `./build/MaryGuardian` without that flag and put files into `mg_workspace/inbox`; new files are picked up automatically every few seconds, and the inbox is never modified.
+
+**Try it:** press **Scan**, open the *Needs attention* view, open `INV-2026-0106_brightwave.pdf` and click **Open X-ray**. Then open `INV-2026-0999_evil_vendor.pdf`, and look at the **Privacy** tab to see exactly what the cloud was sent.
+
+Without a key the app still runs in rules-only mode: classification by pattern and all consistency checks, no model calls.
+
+### Configuration
+
+Everything comes from environment variables or `.env` (see [`.env.example`](.env.example)). Key points: `NEBIUS_API_KEY`, `NEBIUS_BASE_URL`, `NEMOTRON_MODEL_{NANO,SUPER,ULTRA}`, `LLM_BACKEND`, `PII_MASK_LEVEL`, `PII_PROTECTED_TERMS`, `LLM_MAX_REQUESTS_PER_HOUR`, `MG_DEMO_MODE`. No key or URL is hard-coded anywhere.
+
+### Optional: offline local models (experimental, off by default)
+
+Not needed with Nemotron. A host build with `-DMG_LOCAL_LLM=ON` adds download buttons in **Settings** for a small local classifier (Qwen3.5-2B, GGUF) and an optional scan summarizer (OCR-capable VLM + projector). Files come from `https://huggingface.co/` only, optionally SHA-256 verified; no document is ever sent. The default build does not include this.
+
+## How it works
+
+`watch → hash (SHA-256: renames and duplicates are free) → rules + injection check → Nano → escalate to Super only if unsure → code validates every value → file it → local consistency pass across the library`
+
+* **Rules first, models second.** Dates, numbers and amounts come from deterministic extraction; models classify and summarize. A value found only by a weak rule (a bare "total") is escalated to Super, which can correct it.
+* **Consistency is recomputed over the whole library** after every scan and after every correction or confirmation, so the result never depends on the order in which files arrived.
+* **Retrieval happens in code**, not through model tools: the Ultra model only ever sees a short list of document cards.
+* **Learns from corrections.** When you fix a type or collection, the fix is remembered per company and applied to future documents (stored locally in SQLite).
+* **Caching everywhere.** Unchanged files are never re-read, model answers are cached by (model + prompt), and the Activity tab shows calls, tokens and tokens saved.
+* **Human in the loop.** Drafts wait for your approval before anything is exported.
+
+## Tests
 
 ```bash
-# without a model: scanning, rules, search, collections, cleanup all work
-./MaryGuardian --workspace mg_workspace
-
-# with a model (any ChatML-style instruct GGUF; developed with Qwen)
-./MaryGuardian --workspace mg_workspace --model /path/to/model.gguf --port 8080
-
-# optional OCR for scanned PDFs
-./MaryGuardian --workspace mg_workspace --model /path/to/model.gguf \
-               --ocr-model /path/to/ocr.gguf --ocr-mmproj /path/to/mmproj.gguf
+cmake -S . -B build && cmake --build build -j && ctest --test-dir build --output-on-failure
 ```
 
-Put files into `mg_workspace/inbox/`, open <http://localhost:8080>, press **Scan inbox**.
-Model weights are **not** included and have their own licenses.
+(`-DMG_BUILD_APP=OFF` builds and runs only the tests that do not need MuPDF.)
 
-> **Privacy:** `mg_workspace/` contains your documents' metadata, summaries and the audit log. Never commit it.
-> The provided `.gitignore` excludes it.
+* PII masking and reversibility, standard and strict, including secrets and no false positives on ordinary text
+* the four-document bank-account scenario, including confirmation, idempotent recomputation and "no raw account number in the database"
+* X-ray on real PDFs: field boxes land on the text, masked spans, changed account, injection phrases and white-on-white lines are found
+* the demo set itself (hidden text, two different accounts)
+* portable SHA-256 · end-to-end leak test against a mock OpenAI API (retries, `429`, reasoning models that return empty `content`, `json_object` fallback) · model downloader (SHA-256 mismatch deletes the file, URL allow-list) · field validation that rejects hallucinated values · correction memory
 
-## Project layout
+## What existed before the hackathon, and what is new
 
-```
-MaryGuardian/
-├── main.cpp                  entry point, argument parsing
-├── Makefile
-├── core/
-│   ├── Guardian.*            action whitelist, path confinement, PII, approval state, audit log
-│   ├── Safety.hpp            allowed actions, file sniffing, PII patterns
-│   ├── Verifier.*            prompt-injection heuristics
-│   ├── Db.*                  SQLite wrapper: statement cache, batched transactions, RAM caches
-│   ├── Indexer.*             scan → classify → OCR pipeline, RAM index, run statistics
-│   ├── Extract.*             rule-based field extraction + the document-type table
-│   ├── DocReader.*           text from Office / text / XML files
-│   ├── PdfToolEngine.*       MuPDF: read, render, edit
-│   ├── ModelRuntime.*        llama.cpp text generation
-│   ├── OcrEngine.*           vision-language OCR (llama.cpp mtmd)
-│   └── Library.*             user operations: list, edit, collections, cleanup, ask
-├── task/BookkeeperTask.*     single-document extract → draft → approve flow
-├── server/HttpServer.*       loopback HTTP server and JSON API
-├── tests/guardian_test.cpp   `make test`
-└── web/index.html            single-page UI
-```
+The C++ core (incremental indexer, SQLite library, MuPDF/Office text extraction, loopback HTTP server, Guardian allow-list and audit, a local Qwen classifier and OCR on macOS) predates the submission period. Everything below was built during it; the full table is in [`docs/WHAT_CHANGED.md`](docs/WHAT_CHANGED.md).
 
-Workspace (created at runtime): `inbox/`, `output/`, `logs/audit.jsonl`, `library.db`, `web/`.
+* Remote Nemotron backend with 3-tier routing, and field extraction with code-side validation
+* PII-masking gateway: fail-closed leak check, outbound ledger, secret detection, strict entity masking
+* Multilingual classification rules (English, Russian, Kazakh) with date, number, issuer and amount extraction
+* **Consistency & fraud detection:** payee-account baseline and independent confirmation, "details changed" notices, IBAN checksum, reused numbers, outlier amounts, date checks
+* **X-ray:** page view with evidence, cloud view and hidden-text detection; verification-request drafts behind human approval
+* correction memory · background folder watcher · parallel classification
+* Linux port (portable SHA-256, CMake, platform layer) · Privacy, Settings and Activity screens · optional model downloader
+* synthetic dataset generated by the binary itself, with a bank-account-change scenario and a hidden-instruction PDF · test suite
 
-## Design principle
+## Limitations
 
-> Don't ask how to do the work faster. Ask whether it must be done at all — then once, then ahead of time, then only
-> for what changed, then at a cheaper layer of the system — and only then optimise the operation itself.
-
-Concretely: unchanged files are never reopened, SHA-256 is computed once per file state, SQL is persistence rather
-than a working set, writes are batched, and model answers are cached. Please keep this in mind when contributing.
-
-## HTTP API
-
-All `/api/*` calls need the `X-Auth-Token` header (embedded in the served page). JSON in, JSON out.
-
-```
-GET  /                      UI
-GET  /api/status            single-document flow state, model loaded
-GET  /api/audit             Guardian log
-POST /api/upload|draft|approve|edit|export      single-document flow
-POST /api/lib/scan          start a scan
-POST /api/lib/scan_status   progress, report, run statistics, data revision
-POST /api/lib/list|doc|update|collections|collection_save|collection_delete|resort
-POST /api/lib/companies|company_rename|profile_get|profile_set|cleanup|ask
-```
-
-## Roadmap / help wanted
-
-- **Linux port:** replace CommonCrypto SHA-256 (OpenSSL or a small bundled implementation), CPU/CUDA backends, CMake.
-- Accept **standalone images** (JPG/PNG) — the file sniffer currently rejects them before OCR.
-- **Filesystem watcher** (FSEvents / inotify) instead of manual rescans.
-- Language packs: date formats, company forms, document keywords for DE / FR / ES / RU …; localised UI and prompts.
-- **Tests** for `Extract` rules, `Indexer` scan logic and `Db`.
-- Legacy `.doc` / `.xls` (OLE2), `.eml` / `.msg`.
-- Packaging (`.app` / notarised `.dmg`), export collections to a folder tree.
-
-**Adding a document category is one line** in `docTypes()` in `core/Extract.hpp`
-(plus optional rules in `Extract.cpp`). The model prompt, validation, collections and UI pick it up automatically.
-
-## Contributing
-
-Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Changes to `Guardian`, `Safety`,
-or anything that touches files need extra care and a test.
-
-### Reporting security issues
-
-Please do **not** open a public issue for vulnerabilities. Use GitHub's private
-"Report a vulnerability" feature on this repository, or e-mail `<gercules789@gmail.com>`.
+X-ray works on PDFs (other formats are analysed, but not drawn). Legacy `.doc`/`.xls`, standalone images (only via the optional local summarizer) and `.eml` are not supported yet. The optional local OCR path returns a short summary of a scan, not a full transcription. Developed on macOS and built on Linux; the code also contains a Windows platform layer (`core/Platform.hpp`), but no Windows builds are provided. Single-user, local-first design: the public demo runs on synthetic data only and shares one workspace between visitors.
 
 ## License
 
-MaryGuardian is licensed under the **GNU Affero General Public License v3.0 or later** — see [LICENSE](LICENSE).
-Copyright © `<2026> <Khamit>`.
-
-It links [MuPDF](https://mupdf.com/), which is itself AGPL-3.0 (with a separate commercial license from Artifex),
-so the combined program is distributed under the AGPL. Other components:
-
-| Component | License |
-|---|---|
-| [llama.cpp](https://github.com/ggml-org/llama.cpp) (incl. ggml, mtmd) | MIT |
-| [MuPDF](https://mupdf.com/) | AGPL-3.0-or-later / Artifex commercial |
-| [nlohmann/json](https://github.com/nlohmann/json) | MIT |
-| [SQLite](https://sqlite.org/) | Public domain |
-| [Bootstrap Icons](https://icons.getbootstrap.com/) | MIT |
-| Model weights (not included) | per model — check before use or redistribution |
-
-"MaryGuardian" and its logo are not licensed for use as the name of a derived product without permission.
+See [`LICENSE`](LICENSE). MaryGuardian uses MuPDF (AGPL-3.0); third-party components and their licenses are listed in [`docs/THIRD_PARTY.md`](docs/THIRD_PARTY.md). The hosted demo runs the code in this repository.
