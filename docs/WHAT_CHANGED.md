@@ -2,7 +2,7 @@
 
 **Baseline (before Aug 26, 2026):** a macOS-first C++ application that sorted documents: an incremental folder indexer with SQLite and SHA-256 dedup, rules-based extraction of dates, amounts and numbers, MuPDF and Office text extraction, a loopback HTTP server with a per-run token, the Guardian (action allow-list, PII detection, prompt-injection scan, JSONL audit), a local Qwen classifier through llama.cpp, optional local OCR, and a single-page UI. It had no cloud-model backend, no cross-document checks and no page-level evidence view.
 
-**Significantly updated during the submission period.** The commit history since the start of the period: `git log --since=2026-08-26 --stat`.
+**Significantly updated during the submission period.** The diff against the baseline tag: `git diff --stat pre-hackathon..main`.
 
 | Area | Change |
 |---|---|
