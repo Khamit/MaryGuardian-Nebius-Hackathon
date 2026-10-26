@@ -245,7 +245,7 @@ if(MG_BUILD_APP)
 
     # Для статической линковки на Linux (Ubuntu) нужны системные зависимости
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND MUPDF_LIBRARY MATCHES "\\.a$")
-      foreach(dep z jpeg freetype openjp2 jbig2dec harfbuzz png)
+      foreach(dep z jpeg freetype openjp2 jbig2dec harfbuzz png mujs gumbo)
         find_library(MUPDF_DEP_${dep} NAMES ${dep})
         if(MUPDF_DEP_${dep})
           list(APPEND MUPDF_STATIC_LDFLAGS ${MUPDF_DEP_${dep}})
