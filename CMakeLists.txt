@@ -180,7 +180,7 @@ if(MG_BUILD_APP)
 
   # ------ if not find MuPDF
   if(NOT MUPDF_FOUND)
-    message(STATUS "pkg-config mupdf not found, trying manual search (Homebrew)...")
+    message(STATUS "pkg-config mupdf not found, trying manual search...")
 
     find_path(MUPDF_INCLUDE_DIRS
       NAMES mupdf/fitz.h
@@ -188,6 +188,7 @@ if(MG_BUILD_APP)
         /opt/homebrew/include
         /opt/homebrew/opt/mupdf/include
         /usr/local/include
+        /usr/include                  # <-- Добавлено для Ubuntu/Debian
     )
 
     find_library(MUPDF_LIBRARY
@@ -196,6 +197,8 @@ if(MG_BUILD_APP)
         /opt/homebrew/lib
         /opt/homebrew/opt/mupdf/lib
         /usr/local/lib
+        /usr/lib/x86_64-linux-gnu     # <-- Добавлено для Ubuntu/Debian
+        /usr/lib
     )
 
     find_library(MUPDF_THIRD_LIBRARY
@@ -204,6 +207,8 @@ if(MG_BUILD_APP)
         /opt/homebrew/lib
         /opt/homebrew/opt/mupdf/lib
         /usr/local/lib
+        /usr/lib/x86_64-linux-gnu     # <-- Добавлено для Ubuntu/Debian
+        /usr/lib
     )
 
     if(NOT MUPDF_INCLUDE_DIRS OR NOT MUPDF_LIBRARY)
@@ -232,6 +237,16 @@ if(MG_BUILD_APP)
             /usr/local/lib
         )
 
+        if(MUPDF_DEP_${dep})
+          list(APPEND MUPDF_STATIC_LDFLAGS ${MUPDF_DEP_${dep}})
+        endif()
+      endforeach()
+    endif()
+
+    # Для статической линковки на Linux (Ubuntu) нужны системные зависимости
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND MUPDF_LIBRARY MATCHES "\\.a$")
+      foreach(dep z jpeg freetype openjp2 jbig2dec harfbuzz png)
+        find_library(MUPDF_DEP_${dep} NAMES ${dep})
         if(MUPDF_DEP_${dep})
           list(APPEND MUPDF_STATIC_LDFLAGS ${MUPDF_DEP_${dep}})
         endif()
