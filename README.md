@@ -130,7 +130,7 @@ What the test suite proves (`ctest`): a mock "provider" records every request bo
 
 ```bash
 # macOS:           brew install mupdf sqlite curl pkg-config cmake
-# Debian / Ubuntu: sudo apt install build-essential cmake pkg-config libmupdf-dev libsqlite3-dev libcurl4-openssl-dev
+# Debian / Ubuntu: sudo apt install build-essential cmake pkg-config libmupdf-dev libsqlite3-dev libcurl4-openssl-dev ibfreetype-dev libharfbuzz-dev libopenjp2-7-dev libjbig2dec0-dev libgumbo-dev libmujs-dev libjpeg-dev zlib1g-dev
 
 git clone <this repo> && cd <this repo>
 cp .env.example .env                       # put your NEBIUS_API_KEY in it
