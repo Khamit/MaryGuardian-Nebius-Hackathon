@@ -3,6 +3,11 @@
 <head>
 <meta charset="utf-8">
 <title>Mary Guardian</title>
+<link rel="icon" type="image/x-icon" href="/static/img/favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/static/img/favicon-16x16.png">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<meta name="theme-color" content="#0f1115">
 <link rel="stylesheet" href="/static/vendor/bootstrap-icons/bootstrap-icons.min.css">
 <style>
   :root { --bg:#0f1115; --card:#171a21; --input:#1e222b; --border:#2a2f3a; --border-hi:#3a4150; --text:#e6e8ec;
@@ -47,6 +52,8 @@
   .doc .t { font-weight:500; word-break:break-all; } .doc .m { font-size:.78rem; color:var(--dim); margin-top:3px; display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
   .doc .s { font-size:.78rem; color:var(--mute); margin-top:3px; }
   .empty { text-align:center; color:var(--mute); padding:26px 0; font-style:italic; }
+  .logo { border-radius:7px; }
+  .mascot { display:block; margin:18px auto 6px; width:100%; max-width:200px; height:auto; }
   .pii-alert { background:var(--warn-bg); border:1px solid #5a4210; border-radius:7px; padding:9px 13px; margin-top:10px; font-size:.84rem; color:#fbbf24; }
   .ocr-alert { background:var(--warn-bg); border:1px solid #5a4210; border-radius:7px; padding:9px 13px; margin-top:10px; font-size:.84rem; color:#fbbf24; }
   .warning-banner { background:var(--warn-bg); border:1px solid #5a4210; border-radius:7px; padding:12px 16px; margin-bottom:12px; font-size:.86rem; color:#fbbf24; display:flex; align-items:flex-start; gap:10px; }
@@ -94,7 +101,7 @@
 <body>
 <div class="container">
   <div id="warnings-container"></div>
-  <h1><i class="bi bi-folder2-open"></i> Mary Guardian <span class="badge" id="model-badge">AI: rules only</span></h1>
+  <h1><img class="logo" src="/static/img/logo-56.png" alt="" width="28" height="28"> Mary Guardian <span class="badge" id="model-badge">AI: rules only</span></h1>
 
   <div class="card scanbar">
     <button class="btn-primary" id="btn-scan" onclick="scan()"><i class="bi bi-arrow-repeat" id="scan-ico"></i> Scan inbox</button>
@@ -121,7 +128,7 @@
         <input type="text" id="search" placeholder="Search name, company, number, summary…" oninput="onSearch()">
         <div class="mt8" id="list"></div>
       </div>
-      <div class="card" id="detail"><div class="empty">Select a document</div></div>
+      <div class="card" id="detail"><img class="mascot" src="/static/img/mascot-480.png" alt=""><div class="empty">Select a document</div></div>
     </div>
   </div>
 
