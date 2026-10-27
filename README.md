@@ -1,4 +1,5 @@
 # MaryGuardian
+<p align="center"><img src="web/img/mascot-480.png" alt="MaryGuardian mascot" width="220"></p>
 
 [Русская версия](Readme.ru.md)
 

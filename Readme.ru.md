@@ -1,5 +1,7 @@
 # MaryGuardian
 
+<p align="center"><img src="web/img/mascot-480.png" alt="MaryGuardian mascot" width="220"></p>
+
 [English verion](Readme.md)
 
 **Персональный телохранитель для работы с документами, работающий на базе NVIDIA Nemotron в Nebius Token Factory.**
