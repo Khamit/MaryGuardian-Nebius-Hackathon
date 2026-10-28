@@ -7,7 +7,7 @@
 
 Drop invoices, contracts, letters and bills into a folder. MaryGuardian reads and files them, tracks every deadline and, more importantly, **checks the documents against each other**: does the bank account on this invoice match the contract? Did the vendor "just change" its details? Is there text on the page that a person cannot see but a model would obey? Every finding is shown **on the page itself**, with its evidence. When something needs action, it drafts the message for you, and **nothing is exported or sent without your approval**. Your personal data **never leaves your machine unmasked**.
 
-> **Hackathon track:** Personal AI · **Demo:** `<https://maryguardian.combi.kz/>` · **Video:** `<VIDEO_URL>`
+> **Hackathon track:** Personal AI · **Demo:** `https://maryguardian.combi.kz/` · **Video:** `https://www.youtube.com/watch?v=nNGc-7bNZAA`
 
 ## Why this is not another document organizer
 
@@ -125,7 +125,7 @@ What the test suite proves (`ctest`): a mock "provider" records every request bo
 
 ## Quick start
 
-**Fastest:** open the hosted demo at `<https://maryguardian.combi.kz/>`. It holds synthetic data only, settings are read-only, and its state is shared between visitors.
+**Fastest:** open the hosted demo at `https://maryguardian.combi.kz/`. It holds synthetic data only, settings are read-only, and its state is shared between visitors.
 
 **Run it yourself** (macOS or Linux; needs a C++17 compiler, CMake, MuPDF, SQLite, libcurl and pkg-config; nlohmann-json is taken from `third_party/` if it is not installed):
 
